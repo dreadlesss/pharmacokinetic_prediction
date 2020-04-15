@@ -7,7 +7,7 @@ Prediction of intravenous pharmacokinetic parameters, including fu, MRT, t1/2, V
 **dataset**: dataset.xlsx (download from supporting information)
 
 ## 2.Data flow
-![avatar](https://github.com/dreadlesss/pharmacokinetic_prediction/data_flow.png)
+![avatar](https://github.com/dreadlesss/pharmacokinetic_prediction/blob/master/data_flow.png)
 
 ## 3.Description
 **dataset.xlsx**
