@@ -6,6 +6,8 @@ import time
 import pandas as pd
 import numpy as np
 import json
+import matplotlib.pyplot as plt
+import seaborn as sns
 # import logging
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import GradientBoostingRegressor
@@ -19,7 +21,8 @@ from rdkit.Chem import Descriptors
 from rdkit.ML.Descriptors import MoleculeDescriptors
 import warnings
 
-sys.setrecursionlimit(3000)
+
+sys.setrecursionlimit(5000)
 warnings.filterwarnings("ignore")
 
 def progress_bar(count, total, bar_len):
@@ -33,7 +36,60 @@ def add_formal_charges(m):
     for at in m.GetAtoms():
         if at.GetAtomicNum() == 7 and at.GetExplicitValence()==4 and at.GetFormalCharge()==0: # N 
             at.SetFormalCharge(1)
-
+            
+def smiles_from_lib(lib_path, properties=['Name', 'Synonyms', 'CAS', 'ID']):
+    '''Read in the molecular library such as '.sdf' file
+    and extract the properties such as smiles, names, synonyms, cas, id.
+    
+    lib_path: the path of a '.sdf' file or a directory containing '.sdf' files.
+    properties: a property list that wanted.
+    '''
+    # collect the library path
+    path = Path(lib_path)
+    path_list = []
+    if path.is_dir():
+        for file in path.iterdir():
+            if file.suffix == '.sdf':
+                path_list.append(file)
+    else:
+        if path.suffix == '.sdf':
+            path_list.append(path)
+    if not path_list:
+        raise ValueError(f'no library found in {lib_path}')
+    
+    # combine_lib: collect all of the library
+    combine_lib = []
+    for library in path_list:
+        lib_name = library.stem
+        suppl = Chem.SDMolSupplier(library.absolute().as_posix(), sanitize=False)
+        # molecules: collect all the molecule smiles and properties
+        molecules = []
+        for mol in suppl:
+            # molecule: collect the smiles and properties of each molecule
+            molecule = []
+            add_formal_charges(mol)
+            try:
+                new_smiles = Chem.MolToSmiles(mol,isomericSmiles=True)
+            except:
+                new_smiles = None
+                continue
+            molecule.append(new_smiles)
+            
+            # extract properties
+            for prop in properties:
+                try:
+                    mol_prop = mol.GetProp(prop)
+                except:
+                    mol_prop = None
+                finally:
+                    molecule.append(mol_prop)
+            molecules.append(molecule)
+        df = pd.DataFrame(molecules, columns=['SMILES']+properties)
+        df['source'] = lib_name
+        combine_lib.append(df)
+    new_df = pd.concat(combine_lib, axis=0, ignore_index=True)
+    new_df.to_csv('smiles_from_library.tsv', sep='\t')
+            
 def extract_features(path, smiles_col, active_col, force=False, predict=False):
     '''read the 'tsv' file containing SMILES and activity, which is used for feature extracting
     
@@ -93,7 +149,6 @@ def extract_features(path, smiles_col, active_col, force=False, predict=False):
     df_mfp.columns = [f'm{x}' for x in range(df_mfp.shape[1])]
     df.drop('mfp2', axis=1, inplace=True)
     
-    
     # calculate the descriptors
     des_columns = [desc_name[0] for desc_name in Descriptors._descList]
 #     des_columns = ['NumHAcceptors', 'NumHDonors']
@@ -135,7 +190,6 @@ def extract_features(path, smiles_col, active_col, force=False, predict=False):
         np.savetxt(path.parent / 'train_x_y.np', np_save)
         return feature_std, label
 
-
 # stratified sampling
 def stratified_split(x, y, portion=0.2, bins=[]):
     '''Stratified sampling for continuous variables.
@@ -175,7 +229,6 @@ def stratified_split(x, y, portion=0.2, bins=[]):
     x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=portion, stratify=mapping, shuffle=True, random_state=10)
     print(x_train.shape, x_test.shape)
     return x_train, x_test, y_train, y_test
-
 
 class auto_gbdt:
     '''Auto tuning the parameters of GBDT by using the preseted parameters.
@@ -337,10 +390,10 @@ class auto_gbdt:
         # store the tuning results into json file.
         self.save(output, model)
 
-    def predict(self, features, model='model_save.m'):
-        estimator = joblib.load(model)
-        y_pred = estimator.predict(features)
-        return y_pred
+def predict(features, model='model_save.m'):
+    estimator = joblib.load(model)
+    y_pred = estimator.predict(features)
+    return y_pred
     
 def get_params():
     '''There are three types of parameters used for auto tuning:
@@ -395,9 +448,9 @@ def get_params():
 
 # an example to fit the specified data
 if __name__ == '__main__':
-    act_list = ['human VDss (L/kg)', 'MRT (h)', 'terminal  t1/2 (h)', 'human CL (mL/min/kg)']
-    short_list = ['hum_vdss', 'hum_mrt', 'hum_t12', 'hum_clr']
-    df = pd.read_excel('ippin.xlsx')
+    act_list = ['human VDss (L/kg)', 'MRT (h)', 'terminal  t1/2 (h)', 'human CL (mL/min/kg)', 'fraction unbound in plasma (fu)']
+    short_list = ['hum_vdss', 'hum_mrt', 'hum_t12', 'hum_clr', 'hum_fu']
+    df = pd.read_excel('dataset.xlsx')
     cwd = os.getcwd()
     for act, short in zip(act_list, short_list):
         print(f'{short} begin')
@@ -406,8 +459,9 @@ if __name__ == '__main__':
         os.chdir(workspace.as_posix())
         
         # transform
-        df[short] = df[act].apply(lambda x:np.log10(x))
-        df.to_csv(f'{short}.tsv', sep='\t')
+        if act != 'fraction unbound in plasma (fu)':
+            df[short] = df[act].apply(lambda x:np.log10(x))
+            df.to_csv(f'{short}.tsv', sep='\t')
         
         # training
         x, y = extract_features(f'{short}.tsv', 'SMILES', short, False)
